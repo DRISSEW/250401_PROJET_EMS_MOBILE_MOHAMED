@@ -1,2 +1,0 @@
-# mohamed
-app mobile
