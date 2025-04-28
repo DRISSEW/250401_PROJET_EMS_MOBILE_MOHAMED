@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "EMS",
+    "slug": "electric-wave",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icons/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/icons/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ems.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icons/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.ems.app",
+      "usesCleartextTraffic": true
+    },
+    "web": {
+      "favicon": "./assets/icons/favicon.png"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "scheme": "EMS",
+    "splashScreen": {
+      "imageResizeMode": "contain",
+      "backgroundColor": "#ffffff",
+      "hideExponentText": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "e0a3d950-3253-4f2e-9303-875e1becd616"
+      }
+    }
+  }
+}

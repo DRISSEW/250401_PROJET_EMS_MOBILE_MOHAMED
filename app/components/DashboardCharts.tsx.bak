@@ -1,0 +1,1159 @@
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import {
+  StyleSheet,
+  Text,
+  View,
+  ScrollView,
+  Dimensions,
+  TouchableOpacity,
+  ActivityIndicator,
+  Animated,
+} from 'react-native';
+import { LineChart } from 'react-native-gifted-charts';
+import { useLocalSearchParams } from 'expo-router';
+import { useApiKey } from '../context/ApiKeyContext';
+import ThemeProvider, { useTheme } from '../context/ThemeContext';
+import { MaterialIcons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { Colors } from 'react-native/Libraries/NewAppScreen';
+import { PinchGestureHandler, State } from 'react-native-gesture-handler';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Time range options for data visualization
+const TIME_RANGES = {
+  DAY: { label: 'Day', value: 24 * 60 * 60, interval: 120 }, // 24h with 30min intervals
+  WEEK: { label: 'Week', value: 7 * 24 * 60 * 60, interval: 900 }, // 7 days with 6h intervals
+  MONTH: { label: 'Month', value: 30 * 24 * 60 * 60, interval: 3600 }, // 30 days with 1 day intervals
+  YEAR: { label: 'Year', value: 365 * 24 * 60 * 60, interval: 43200 }, // 365 days with 1 week intervals
+};
+
+
+
+// Define color palette for different lines
+const ITEM_COLORS = ['#FF5733', '#33FF57', '#3357FF', '#F033FF', '#FF33A8'];
+
+// Custom PieChart component using Views
+const CustomPieChart = ({ value, maxValue, color, backgroundColor, size = 130 }) => {
+  const { colors } = useTheme();
+  // Calculate the percentage filled (value / maxValue)
+  const percentage = Math.min(value / maxValue, 1);
+  const innerRadius = size * 0.35; // Inner circle radius
+  const strokeWidth = size * 0.2; // Width of the arc/ring
+  
+  // Create a circular ring using a View with a specific height as the filled part
+  return (
+    <View style={[styles.customPieContainer, { width: size, height: size }]}>
+      {/* Background circle/ring */}
+      <View style={[
+        styles.pieRing, 
+        { 
+          width: size, 
+          height: size, 
+          borderRadius: size / 2,
+          borderWidth: strokeWidth,
+          borderColor: backgroundColor,
+        }
+      ]} />
+      
+      {/* Filled portion - we use a View with height based on percentage */}
+      <View style={[
+        styles.pieFilledContainer,
+        { 
+          width: size, 
+          height: size,
+          borderRadius: size / 2,
+          overflow: 'hidden'
+        }
+      ]}>
+        <View style={[
+          styles.pieFilled,
+          { 
+            width: size,
+            height: size * percentage,
+            backgroundColor: color,
+            bottom: 0,
+          }
+        ]} />
+      </View>
+      
+      {/* Inner circle/hole */}
+      <View style={[
+        styles.pieInnerCircle, 
+        { 
+          width: innerRadius * 2, 
+          height: innerRadius * 2,
+          borderRadius: innerRadius,
+        }
+      ]}>
+        <Text style={[styles.centerLabel, { color: Colors.surface }]}>
+          {value.toFixed(2)}
+          <Text style={styles.unitLabel}> A</Text>
+        </Text>
+      </View>
+    </View>
+  );
+};
+
+// Custom Bar Chart Component
+const CustomBarChart = ({ value, maxValue, color, backgroundColor, size = 130 }) => {
+  const { colors } = useTheme();
+  const percentage = Math.min(value / maxValue, 1);
+  
+  return (
+    <View style={[styles.barChartContainer, { height: size }]}>
+      <View style={[styles.barBackground,{backgroundColor:colors.border}]}>
+        <View 
+          style={[
+            styles.barFill, 
+            { 
+              height: `${percentage * 100}%`, 
+              backgroundColor: color 
+            }
+          ]} 
+        />
+      </View>
+      <View style={styles.labelContainer}>
+
+        <Text style={[styles.labelText, { color: colors.text }]}>{value.toFixed(2)}</Text>
+        <Text style={[styles.unitLabel, { color: colors.textSecondary }]}> A</Text>
+      </View>
+    </View>
+  );
+};
+
+const DashboardCharts = () => {
+  const { apiKey } = useApiKey();
+  const { colors } = useTheme();
+  const params = useLocalSearchParams();
+  const items = params?.items ? JSON.parse(params.items as string) : [];
+  const dashboardName = params?.dashboardName as string || '';
+
+  // Add state for selected max value
+  const [selectedMaxValue, setSelectedMaxValue] = useState('defaults');
+
+  // State for time range selection
+  const [selectedTimeRange, setSelectedTimeRange] = useState(TIME_RANGES.DAY);
+  
+  // State for chart type toggle (pie or bar)
+  const [showPieChart, setShowPieChart] = useState(false);
+  
+  // Animation value for toggle switch
+  const toggleAnim = useRef(new Animated.Value(0)).current;
+  
+  // Generate colors based on item and value
+  const getColorForItem = (item: any, index: number) => {
+    return ITEM_COLORS[index % ITEM_COLORS.length];
+  };
+
+  const [liveValues, setLiveValues] = useState<{ [key: string]: number }>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [chartData, setChartData] = useState<{ [key: string]: Array<{value: number, date: string, timestamp: number}> }>({});
+
+  // Helper function to get the appropriate unit based on dashboard name
+  const getUnitForDashboard = (name: string) => {
+    switch (name) {
+      case 'Multipuissance': return 'W';
+      case 'MultiCourant': return 'A';
+      case 'Temperature': return '°C';
+      case 'Consommation': return 'kWh';
+      default: return '';
+    }
+  };
+
+  // Function to fetch current values with error handling
+  const fetchLiveValues = async () => {
+    try {
+      const updatedValues: { [key: string]: number } = {};
+      await Promise.all(
+        items.map(async (item: any) => {
+          try {
+            const res = await fetch(
+              `http://electricwave.ma/energymonitoring/feed/value.json?id=${item.id}&apikey=${apiKey}`
+            );
+            const data = await res.json();
+            const value = parseFloat(Number(data).toFixed(2)) || 0;
+            updatedValues[item.id] = value;
+          } catch (err) {
+            console.error(`Error fetching live value for ${item.id}:`, err);
+            updatedValues[item.id] = 0;
+          }
+        })
+      );
+      setLiveValues(updatedValues);
+    } catch (error) {
+      console.error('Error fetching live values:', error);
+      setError('Failed to load live data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Add a cache object to store fetched data
+  const dataCache: { [key: string]: Array<{ value: number; date: string; timestamp: number }> } = {};
+
+  // Fetch historical data with caching
+  const fetchHistoricalData = async () => {
+    try {
+      setLoading(true);
+
+      const now = Math.floor(Date.now() / 1000);
+      const startTime = (now - selectedTimeRange.value) * 1000; // Start time based on selected range
+      const end = now * 1000;
+
+      const history: { [key: string]: Array<{ value: number; date: string; timestamp: number }> } = {};
+
+      for (const item of items) {
+        const cacheKey = `${item.id}-${startTime}-${end}-${selectedTimeRange.interval}`;
+
+        // Check if data is already in the cache
+        if (dataCache[cacheKey]) {
+          console.log(`Using cached data for ${item.id}`);
+          history[item.id] = dataCache[cacheKey];
+          continue;
+        }
+
+        try {
+          const url = `http://electricwave.ma/energymonitoring/feed/data.json?id=${item.id}&start=${startTime}&end=${end}&interval=${selectedTimeRange.interval}&apikey=${apiKey}`;
+          const res = await fetch(url);
+          const data = await res.json();
+
+          const formattedData = data.map((point: any) => {
+            const timestamp = point[0];
+            return {
+              value: parseFloat(Number(point[1]).toFixed(2)) || 0,
+              date: new Date(timestamp * 1000).toISOString(),
+              timestamp: timestamp,
+            };
+          });
+
+          // Store the fetched data in the cache
+          dataCache[cacheKey] = formattedData;
+          history[item.id] = formattedData;
+        } catch (err) {
+          console.error(`Error fetching data for ${item.id}:`, err);
+          history[item.id] = [];
+        }
+      }
+
+      setChartData(history);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      setError('Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Format timestamp for x-axis based on time range
+  const formatXAxisLabel = (timestamp: number) => {
+    const date = new Date(timestamp * 1000);
+    
+    switch(selectedTimeRange) {
+      case TIME_RANGES.DAY:
+        // 24-hour format: "HH:MM"
+        return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+      case TIME_RANGES.WEEK:
+        // Day and hour: "DD HH:00"
+        return `${date.getDate()}/${date.getMonth()+1} ${date.getHours()}:00`;
+      case TIME_RANGES.MONTH:
+        // Day only: "DD/MM"
+        return `${date.getDate()}/${date.getMonth()+1}`;
+      case TIME_RANGES.YEAR:
+        // Month only: "MMM"
+        return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][date.getMonth()];
+      default:
+        return '';
+    }
+  };
+
+  const [zoomLevel, setZoomLevel] = useState(1); // State for zoom level
+
+  const [zoomLevels, setZoomLevels] = useState<{ [key: string]: number }>(
+    items.reduce((acc: { [key: string]: number }, item: any) => {
+      acc[item.id] = 10; // Initialize each graph's zoom level to 0.5 (fully zoomed out)
+      return acc;
+    }, {})
+  );
+
+  // Handle pinch gesture
+  const handlePinchGesture = (event: any, id: string) => {
+    const scale = event.nativeEvent.scale;
+
+    // Adjust zoom level for the specific graph
+    setZoomLevels((prev) => ({
+      ...prev,
+      [id]: Math.min(Math.max(prev[id] - (scale - 1) * 0.2, 0.5), 10), // Clamp zoom level between 0.5 and 10
+    }));
+  };
+
+  const handlePinchStateChange = (event: any) => {
+    if (event.nativeEvent.state === State.END) {
+      // Reset scale to 1 after gesture ends to avoid compounding the zoom effect
+      event.nativeEvent.scale = 1;
+    }
+  };
+
+  // Function to handle zoom in
+  const handleZoomIn = () => {
+    setZoomLevel((prev) => Math.min(prev + 0.1, 10)); // Increase zoom level by 0.1
+  };
+
+  // Function to handle zoom out
+  const handleZoomOut = () => {
+    setZoomLevel((prev) => Math.max(prev - 0.1, 0.5)); // Decrease zoom level by 0.1
+  };
+
+  // Enhanced chart rendering with formatted time labels for individual charts
+  const renderLineChart = useCallback((item: any, index: number) => {
+    const data = chartData[item.id] || [];
+    if (!data.length) return null;
+  
+    const color = getColorForItem(item, index);
+    const maxValue = Math.max(...data.map((point) => point.value));
+    const yAxisLabels = Array.from({ length: 5 }, (_, i) =>
+      Math.round((maxValue * (i + 1)) / 5).toString()
+    );
+  
+    // Format data for the chart with formatted x-axis labels
+    const formattedData = data.map((point) => ({
+      value: point.value,
+      label: formatXAxisLabel(point.timestamp),
+      timestamp: point.timestamp,
+    }));
+  
+    return (
+      <PinchGestureHandler
+        onGestureEvent={(event) => handlePinchGesture(event, item.id)}
+        onHandlerStateChange={handlePinchStateChange}
+        key={index}
+      >
+        <View style={{ flex: 1 }}>
+          <View
+            style={[
+              styles.lineChartCard,
+              { backgroundColor: colors.surface, shadowColor: colors.shadow },
+            ]}
+          >
+            <Text style={[styles.chartTitle, { color: colors.text }]}>
+              {item.name}
+            </Text>
+            <View style={styles.lineChartWrapper}>
+              <LineChart
+                data={formattedData}
+                height={200}
+                width={SCREEN_WIDTH - 40}
+                hideDataPoints={formattedData.length > 15}
+                showDataPoints={formattedData.length <= 15}
+                color={color}
+                thickness={2}
+                startFillColor={color}
+                endFillColor={colors.background}
+                startOpacity={0.8}
+                endOpacity={0.1}
+                initialSpacing={20}
+                spacing={20 / (zoomLevels[item.id] || 1)} // Use the specific graph's zoom level
+                xAxisLabelTexts={formattedData.map((item) => item.label)}
+                yAxisTextStyle={{
+                  color: colors.textSecondary,
+                  fontSize: 12,
+                  fontWeight: "500",
+                }}
+                xAxisLabelTextStyle={{
+                  color: colors.textSecondary,
+                  fontSize: 10,
+                  fontWeight: "500",
+                  rotation: 35,
+                  textAlign: "center",
+                  width: 40,
+                }}
+                yAxisLabelTexts={yAxisLabels}
+                yAxisColor={colors.border}
+                xAxisColor={colors.border}
+                rulesType="dashed"
+                rulesColor={colors.border + "40"}
+                yAxisTextNumberOfLines={1}
+                isAnimated={false}
+              />
+            </View>
+          </View>
+        </View>
+      </PinchGestureHandler>
+    );
+  }, [chartData, colors, zoomLevels, liveValues, dashboardName, selectedTimeRange]);
+  
+
+  // Combined multiple line chart for MultiCourant with rotated labels
+  const renderMultipleCourantChartAlternative = useCallback(() => {
+    if (Object.keys(chartData).length === 0) return null;
+    
+    let maxValue = 0;
+    items.forEach((item: any) => {
+      const itemData = chartData[item.id] || [];
+      const itemMax = Math.max(...itemData.map(point => point.value), 0);
+      maxValue = Math.max(maxValue, itemMax);
+    });
+    
+    return (
+      <View style={[styles.lineChartCard, { backgroundColor: colors.surface, shadowColor: colors.shadow }]}>
+        <Text style={[styles.chartTitle, { color: colors.text }]}>Current Comparison</Text>
+        
+        <View style={styles.legendContainer}>
+          {items.map((item: any, index: number) => (
+            <View key={item.id} style={styles.legendItem}>
+              <View style={[styles.legendColor, { backgroundColor: getColorForItem(item, index) }]} />
+              <Text style={[styles.legendText, { color: colors.text }]}>{item.name}</Text>
+            </View>
+          ))}
+        </View>
+        
+        <View style={styles.lineChartWrapper}>
+          <View style={styles.overlayChartsContainer}>
+            <View style={styles.gridOverlay}>
+              <LineChart
+                data={[{value: 0}, {value: maxValue}]}
+                height={250}
+                width={SCREEN_WIDTH - 60}
+                noOfSections={5}
+                thickness={0}
+                hideDataPoints
+                showVerticalLines
+                initialSpacing={20}
+                spacing={30}
+                yAxisTextStyle={{ 
+                  color: colors.textSecondary,
+                  fontSize: 12,
+                  fontWeight: '500'
+                }}
+                xAxisLabelTextStyle={{
+                  color: colors.textSecondary,
+                  fontSize: 10,
+                  fontWeight: '500',
+                  rotation: 45,
+                  textAlign: 'center',
+                  width: 40
+                }}
+                yAxisLabelTexts={Array.from({ length: 5 }, (_, i) => 
+                  Math.round((maxValue * (i + 1)) / 5).toString()
+                )}
+                yAxisColor={colors.border}
+                xAxisColor={colors.border}
+                rulesType="dashed"
+                rulesColor={colors.border + '40'}
+                hideYAxisText={false}
+                hideXAxisText={true}
+              />
+            </View>
+            
+            {items.map((item: any, index: number) => {
+              const data = chartData[item.id] || [];
+              const color = getColorForItem(item, index);
+              
+              if (!data.length) return null;
+              
+              const formattedData = data.map(point => ({
+                value: point.value,
+                label: formatXAxisLabel(point.timestamp)
+              }));
+              
+              return (
+                <View key={item.id} style={styles.chartOverlay}>
+                  <LineChart
+                    data={formattedData}
+                    height={250}
+                    width={SCREEN_WIDTH - 60}
+                    noOfSections={5}
+                    color={color}
+                    thickness={2}
+                    hideDataPoints={formattedData.length > 15}
+                    showDataPoints={formattedData.length <= 15 && index === 0}
+                    dataPointsColor={color}
+                    startFillColor="transparent"
+                    endFillColor="transparent"
+                    initialSpacing={20}
+                    spacing={formattedData.length > 20 ? 20 : 30}
+                    hideYAxisText
+                    hideXAxisText={index !== items.length - 1}
+                    
+                    xAxisLabelTextStyle={{
+                      color: colors.textSecondary,
+                      fontSize: 10,
+                      fontWeight: '500',
+                      rotation: 45,
+                      textAlign: 'center',
+                      width: 40
+                    }}
+                    isAnimated={false}
+                  />
+                </View>
+              );
+            })}
+          </View>
+        </View>
+        
+        <View style={styles.multipleCurrentValues}>
+          {items.map((item: any, index: number) => (
+            <View key={item.id} style={styles.currentValueItem}>
+              <View style={styles.multipleCurrentValues}>
+                <View style={[styles.colorDot, { backgroundColor: getColorForItem(item, index) }]} />
+                <Text style={[styles.currentValueLabel, { color: colors.text }]}>
+                  {item.name}:
+                </Text>
+                <Text style={[styles.currentValueText, { color: colors.text }]}>
+                  {(liveValues[item.id] || 0).toFixed(2)} {getUnitForDashboard(dashboardName)}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }, [chartData, colors, liveValues, items, selectedTimeRange]);
+
+  // Toggle chart type animation
+  const toggleChartType = () => {
+    setShowPieChart(!showPieChart);
+    Animated.timing(toggleAnim, {
+      toValue: showPieChart ? 1 : 0,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  // Time range selector component
+  const renderTimeRangeSelector = () => (
+    <View style={styles.timeRangeContainer}>
+      {Object.values(TIME_RANGES).map((range) => (
+        <TouchableOpacity
+          key={range.label}
+          style={[
+            styles.timeRangeButton,
+            selectedTimeRange.label === range.label && { 
+              backgroundColor: colors.primary,
+              borderColor: colors.primary
+            }
+          ]}
+          onPress={() => setSelectedTimeRange(range)}
+        >
+          <Text
+            style={[
+              styles.timeRangeText,
+              selectedTimeRange.label === range.label ? 
+                { color: '#fff' } : { color: colors.textSecondary }
+            ]}
+          >
+            {range.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
+  // Render charts based on dashboard type
+  const renderCharts = useMemo(() => {
+    if (dashboardName === 'MultiCourant') {
+      return (
+        <ScrollView contentContainerStyle={styles.lineChartsContainer}>
+          {renderMultipleCourantChartAlternative()}
+        </ScrollView>
+      );
+    } else {
+      return (
+        <ScrollView contentContainerStyle={styles.lineChartsContainer}>
+          {items.map((item: { id: string; name: string }, index: number) => 
+            renderLineChart(item, index)
+          )}
+        </ScrollView>
+      );
+    }
+  }, [dashboardName, items, renderLineChart, renderMultipleCourantChartAlternative]);
+
+  // Custom toggle switch for chart type
+  // const renderChartTypeToggle = () => {
+  //   const translateX = toggleAnim.interpolate({
+  //     inputRange: [0, 1],
+  //     outputRange: [2, 28]
+  //   });
+    
+  //   return (
+  //     <View style={styles.toggleContainer}>
+  //       <Text style={[styles.toggleLabel, { color: colors.text }]}>Chart Type:</Text>
+  //       <TouchableOpacity 
+  //         style={[styles.toggleButton, { backgroundColor: colors.border + '50' }]} 
+  //         onPress={toggleChartType}
+  //         activeOpacity={0.8}
+  //       >
+  //         <Animated.View 
+  //           style={[
+  //             styles.toggleThumb, 
+  //             { 
+  //               transform: [{ translateX }],
+  //               backgroundColor: colors.primary 
+  //             }
+  //           ]} 
+  //         />
+  //         <View style={styles.toggleLabelsContainer}>
+  //           <Text style={[
+  //             styles.toggleOptionText, 
+  //             { color: !showPieChart ? '#fff' : colors.textSecondary }
+  //           ]}>
+  //             Pie
+  //           </Text>
+  //           <Text style={[
+  //             styles.toggleOptionText, 
+  //             { color: showPieChart ? '#fff' : colors.textSecondary }
+  //           ]}>
+  //             Bar
+  //           </Text>
+  //         </View>
+  //       </TouchableOpacity>
+  //     </View>
+  //   );
+  // };
+
+  // Update the CustomBarChart to use the selected max value
+  const getMaxValueForChart = (value: number) => {
+    switch (selectedMaxValue) {
+      case '0.5':
+        return 0.5;
+      case '0.3':
+        return 0.3;
+      case '0.1':
+        return 0.1;
+      case '1':
+        return 1;
+      case 'defaults':
+      default:
+        // Default logic for max value
+        if (value >= 10 && value < 20) return 20;
+        if (value >= 20 && value < 50) return 50;
+        if (value >= 50 && value < 100) return 100;
+        if (value >= 100 && value < 200) return 200;
+        if (value >= 200 && value < 500) return 500;
+        if (value >= 500 && value < 1000) return 1000;
+        if (value >= 1000) return Math.ceil(value / 1000) * 1000;
+        return 10;
+    }
+  };
+
+  // Update the renderBalanceCharts function
+  const renderBalanceCharts = () => {
+    const pieData = items.map((item: any, index: number) => {
+      const value = liveValues[item.id] ?? 0;
+      const maxValue = getMaxValueForChart(value);
+
+      return {
+        id: item.id,
+        label: item.name,
+        value,
+        color: getColorForItem(item, index),
+        maxValue
+      };
+    });
+
+    return (
+      <View style={{flexDirection:'column',gap:10}}>
+      <View style={[styles.chartsGrid]}>
+        {pieData.map((item: any, index: number) => (
+          <View key={index} style={{flexDirection:'column', justifyContent:'space-between',alignItems:'center'}}>
+            <View style={[styles.chartCard, { backgroundColor: colors.surface, shadowColor: colors.shadow }]}>
+              {showPieChart ? (
+                <CustomPieChart 
+                  value={item.value} 
+                  maxValue={item.maxValue}
+                  color={item.color}
+                  backgroundColor={colors.border}
+                  size={130}
+                />
+              ) : (
+                <CustomBarChart 
+                  value={item.value}
+                  maxValue={item.maxValue}
+                  color={item.color}
+                  backgroundColor={colors.border}
+                  size={130}
+                />
+              )}
+            </View>
+            <View style={styles.labelContainer}>
+              <View style={[styles.colorDot, { backgroundColor: item.color }]} />
+              <Text style={[styles.labelText, { color: colors.text }]}>{item.label}</Text>
+            </View>
+          </View>
+        ))}
+        
+      </View>
+      <View style={{flexDirection:'row', justifyContent:'space-between', paddingHorizontal:20}}>
+      <Text style={[styles.sectionTitle,{color:colors.text}]}>Custom Range</Text>
+    </View>
+    <View style={{flexDirection:'row', justifyContent:'flex-start', alignItems:'center', gap:10}}>
+      <View style={[styles.checkboxContainer, { backgroundColor: colors.surface }]}>
+        <View style={styles.checkboxRow}>
+          <TouchableOpacity 
+            style={[styles.checkbox, { borderColor: colors.border }]}
+            onPress={() => setSelectedMaxValue('defaults')}
+          >
+            <View style={[
+              styles.checkboxInner, 
+              { backgroundColor: selectedMaxValue === 'defaults' ? colors.primary : 'transparent' }
+            ]} />
+          </TouchableOpacity>
+          <Text style={[styles.checkboxLabel, { color: colors.text }]}>Default</Text>
+        </View>
+        
+        <View style={styles.checkboxRow}>
+          <TouchableOpacity 
+            style={[styles.checkbox, { borderColor: colors.border }]}
+            onPress={() => setSelectedMaxValue('0.1')}
+          >
+            <View style={[
+              styles.checkboxInner, 
+              { backgroundColor: selectedMaxValue === '0.1' ? colors.primary : 'transparent' }
+            ]} />
+          </TouchableOpacity>
+          <Text style={[styles.checkboxLabel, { color: colors.text }]}>0.1</Text>
+        </View>
+
+        <View style={styles.checkboxRow}>
+          <TouchableOpacity 
+            style={[styles.checkbox, { borderColor: colors.border }]}
+            onPress={() => setSelectedMaxValue('0.3')}
+          >
+            <View style={[
+              styles.checkboxInner, 
+              { backgroundColor: selectedMaxValue === '0.3' ? colors.primary : 'transparent' }
+            ]} />
+          </TouchableOpacity>
+          <Text style={[styles.checkboxLabel, { color: colors.text }]}>0.3</Text>
+        </View>
+
+        <View style={styles.checkboxRow}>
+          <TouchableOpacity 
+            style={[styles.checkbox, { borderColor: colors.border }]}
+            onPress={() => setSelectedMaxValue('0.5')}
+          >
+            <View style={[
+              styles.checkboxInner, 
+              { backgroundColor: selectedMaxValue === '0.5' ? colors.primary : 'transparent' }
+            ]} />
+          </TouchableOpacity>
+          <Text style={[styles.checkboxLabel, { color: colors.text }]}>0.5</Text>
+        </View>
+        
+        <View style={styles.checkboxRow}>
+          <TouchableOpacity 
+            style={[styles.checkbox, { borderColor: colors.border }]}
+            onPress={() => setSelectedMaxValue('1')}
+          >
+            <View style={[
+              styles.checkboxInner, 
+              { backgroundColor: selectedMaxValue === '1' ? colors.primary : 'transparent' }
+            ]} />
+          </TouchableOpacity>
+          <Text style={[styles.checkboxLabel, { color: colors.text }]}>1</Text>
+        </View>
+
+      </View>
+    </View>
+    <View style={{flexDirection:'row', justifyContent:'space-between', paddingHorizontal:20}}>
+      <Text style={[styles.sectionTitle,{color:colors.text}]}>Range line</Text>
+    </View>    
+    </View>
+    );
+  };
+
+  useEffect(() => {
+    fetchLiveValues();
+    if (dashboardName !== 'Equilibrage') {
+      fetchHistoricalData();
+    }
+    const interval = setInterval(fetchLiveValues, 100);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Refetch data when time range changes
+  useEffect(() => {
+    if (dashboardName !== 'Equilibrage') {
+      fetchHistoricalData();
+    }
+  }, [selectedTimeRange]);
+
+  const renderHeader = () => (
+    <View style={[styles.header, { backgroundColor: colors.surface }]}>
+      <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+        <MaterialIcons name="arrow-back" size={24} color={colors.text} />
+      </TouchableOpacity>
+      <Text style={[styles.headerTitle, { color: colors.text }]}>
+        {dashboardName}
+      </Text>
+    </View>
+  );
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {renderHeader()}
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={{ marginTop: 10, color: colors.textSecondary }}>Loading data...</Text>
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={{flexDirection:'row', justifyContent:'space-between', paddingHorizontal:20}}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              {dashboardName === 'Equilibrage' ? 'Current Balance' : 'Live Monitoring'}
+            </Text>
+          </View>
+          
+          {/* {dashboardName === 'Equilibrage' && renderChartTypeToggle()} */}
+          {dashboardName !== 'Equilibrage' && renderTimeRangeSelector()}
+          
+          {/* Zoom Controls */}
+          
+
+          {dashboardName === 'Equilibrage' ? renderBalanceCharts() : renderCharts}
+          
+        </ScrollView>
+      )}
+    </View>
+  );
+};
+
+export default DashboardCharts;
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    elevation: 3,
+  },
+  backButton: {
+    marginRight: 16,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '600',
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  scrollContent: {
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    
+  },
+  chartsGrid: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    
+  },
+  chartCard: {
+    marginVertical: 12,
+    paddingVertical: 20,
+    borderRadius: 16,
+    alignItems: 'center',
+    backgroundColor: 'red',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  centerLabel: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  unitLabel: {
+    fontSize: 12,
+    fontWeight:'bold',
+    marginTop: 2
+  },
+  labelContainer: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  labelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  colorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  lineChartsContainer: {
+    paddingBottom: 20,
+  },
+  lineChartCard: {
+    marginVertical: 12,
+    padding: 15,
+    borderRadius: 16,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  chartTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  lineChartWrapper: {
+    minWidth: SCREEN_WIDTH - 60,
+    paddingRight: 20,
+  },
+  currentValueContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 5,
+  },
+  currentValueLabel: {
+    fontSize: 14,
+    marginRight: 5,
+  },
+  currentValueText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  timeRangeContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  timeRangeButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#DDDDDD',
+    backgroundColor: '#F5F5F5',
+  },
+  timeRangeText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  legendContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 15,
+    justifyContent: 'center',
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 20,
+    marginBottom: 8,
+  },
+  legendColor: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 6,
+  },
+  legendText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  multipleCurrentValues: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-around',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#EEEEEE',
+  },
+  currentValueItem: {
+    marginHorizontal: 10,
+    marginVertical: 5,
+  },
+  overlayChartsContainer: {
+    position: 'relative',
+    height: 250,
+    width: SCREEN_WIDTH - 60,
+  },
+  gridOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1,
+  },
+  chartOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 2,
+  },
+  maxValueLabel: {
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  // Custom Pie Chart Styles
+  customPieContainer: {
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pieRing: {
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pieFilledContainer: {
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pieFilled: {
+    position: 'absolute',
+    width: '100%',
+  },
+  pieInnerCircle: {
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Bar Chart Styles
+  barChartContainer: {
+    width: 100,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  barBackground: {
+    width: '60%',
+    height: '85%',
+    borderRadius: 8,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+  },
+  barFill: {
+    width: '100%',
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+  },
+  barValueText: {
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Toggle Switch Styles
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 12,
+    paddingHorizontal: 20,
+  },
+  toggleLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    marginRight: 10,
+  },
+  toggleButton: {
+    width: 60,
+    height: 30,
+    borderRadius: 15,
+    padding: 2,
+    position: 'relative',
+  },
+  toggleThumb: {
+    position: 'absolute',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    top: 2,
+    left: 2,
+    elevation: 2,
+    zIndex: 2,
+  },
+  toggleLabelsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    height: '100%',
+    paddingHorizontal: 8,
+    zIndex: 1, 
+  },
+  toggleOptionText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  checkboxContainer: {
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    gap: 10,
+    padding: 16,
+    borderRadius: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+    elevation: 2,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  checkboxInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 2,
+  },
+  checkboxLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  zoomControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginVertical: 10,
+  },
+  zoomButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#ddd',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 10,
+  },
+  zoomButtonText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+});
