@@ -1,15 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons,MaterialCommunityIcons } from '@expo/vector-icons';
 // import { useAuth } from '../context/AuthContext';
 import { router } from 'expo-router';
 import { useLanguage } from '../context/LanguageContext';
+import AnimatedBottomBar from '../components/AnimatedBottomBar';
 
 export const SettingsScreen = () => {
   const { theme, setTheme, colors } = useTheme();
   // const { signOut } = useAuth();
   const { language, setLanguage, t } = useLanguage();
+  const [currentTabIndex, setCurrentTabIndex] = useState(3);
 
   const handleThemeChange = (newTheme: 'light' | 'dark' | 'system') => {
     setTheme(newTheme);
@@ -21,6 +23,26 @@ export const SettingsScreen = () => {
       router.replace('/(auth)/login');
     } catch (error) {
       console.error('Error logging out:', error);
+    }
+  };
+  const handleTabPress = (index: number) => {
+    setCurrentTabIndex(index);
+    switch (index) {
+      case 0:
+        router.push('/home');
+        break;
+      case 1:
+        router.push('/dashboards');
+        break;
+      case 2:
+        router.push('/dropdown');
+        break;
+      case 3:
+        router.push('/settings');
+        break;
+      case 4:
+        router.push('/profile');
+        break;
     }
   };
 
@@ -39,7 +61,7 @@ export const SettingsScreen = () => {
           </View>
         </View>
 
-        <ScrollView>
+        <ScrollView style={{ marginBottom: 60 }}>
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings.appearance')}</Text>
             
@@ -117,16 +139,20 @@ export const SettingsScreen = () => {
             <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings.account')}</Text>
             <TouchableOpacity 
               style={[styles.settingItem, { backgroundColor: colors.surface }]}
-              // onPress={handleLogout}
+              onPress={() => router.push('/profile')}
             >
               <View style={styles.settingContent}>
-                <MaterialIcons name="logout" size={24} color={colors.error} />
-                <Text style={[styles.settingText, { color: colors.error }]}>{t('settings.logout')}</Text>
+                <MaterialCommunityIcons name="account" size={24} color={colors.error} />
+                <Text style={[styles.settingText, { color: colors.error }]}>{t('settings.account')}</Text>
               </View>
             </TouchableOpacity>
           </View>
         </ScrollView>
       </View>
+      <AnimatedBottomBar
+        currentIndex={currentTabIndex}
+        onTabPress={handleTabPress}
+      />
     </SafeAreaView>
   );
 };

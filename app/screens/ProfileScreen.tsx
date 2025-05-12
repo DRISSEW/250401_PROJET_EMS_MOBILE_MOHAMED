@@ -1,15 +1,38 @@
-import React, { useEffect } from 'react';
+import React, { useEffect,useState } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { useUser } from '../context/UserContext';
 import { useTheme } from '../context/ThemeContext';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useApiKey } from '../context/ApiKeyContext';
+import AnimatedBottomBar from '../components/AnimatedBottomBar';
 
 export default function ProfileScreen() {
   const { username, usernames, setUsername, removeUsername, getUserApiKey } = useUser();
   const { colors } = useTheme();
   const { apiKey, setApiKey } = useApiKey();
+  const [currentTabIndex, setCurrentTabIndex] = useState(4);
+
+  const handleTabPress = (index: number) => {
+    setCurrentTabIndex(index);
+    switch (index) {
+      case 0:
+        router.push('/home');
+        break;
+      case 1:
+        router.push('/dashboards');
+        break;
+      case 2:
+        router.push('/dropdown');
+        break;
+      case 3:
+        router.push('/settings');
+        break;
+      case 4:
+        router.push('/profile');
+        break;
+    }
+  };
 
   // Ensure the current API key is set when the component mounts
   useEffect(() => {
@@ -118,6 +141,10 @@ export default function ProfileScreen() {
           </View>
         </ScrollView>
       </View>
+      <AnimatedBottomBar
+        currentIndex={currentTabIndex}
+        onTabPress={handleTabPress}
+      />
     </SafeAreaView>
   );
 }
@@ -146,6 +173,7 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+    marginBottom: 60
   },
   accountsSection: {
     padding: 16,

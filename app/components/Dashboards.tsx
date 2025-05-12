@@ -14,6 +14,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useApiKey } from '../context/ApiKeyContext';
+import AnimatedBottomBar from './AnimatedBottomBar';
+
 
 interface FeedItem {
   id: string;
@@ -34,11 +36,14 @@ const API_URL = 'http://electricwave.ma/energymonitoring/feed/list.json';
 
 
 const dashboards = [
-  { name: 'Multipuissance', id: '1', feednames: ['P_PH2', 'P_TOTALE','P_PH3', 'P_PH1','P1','P2','P3','PT'] },
-  { name: 'MultiCourant', id: '2', feednames: ['I1', 'I2', 'I3', 'i1', 'i2', 'i3'] },
-  { name: 'Equilibrage', id: '3', feednames: ['I1', 'I2', 'I3', 'i1', 'i2', 'i3'] },
-  { name: 'Temperature', id: '4', feednames: ['TEMP1', 'TEMP2', 'TEMP_26'] },
+  { name: 'Multipuissance', id: '1', feednames: ['P_PH2', 'P_TOTALE','P_PH3', 'P_PH1','P1','P2','P3','PT','p1','p2','p3','pt'] },
+  { name: 'MultiCourant', id: '2', feednames: ['I1', 'I2', 'I3','IV1', 'IV2', 'IV3', 'i1', 'i2', 'i3','iph1','iph2','iph3'] },
+  { name: 'Equilibrage', id: '3', feednames: ['I1', 'I2', 'I3','IV1', 'IV2', 'IV3', 'i1', 'i2', 'i3','iph1','iph2','iph3'] },
+  { name: 'Temperature', id: '4', feednames: ['TEMP1', 'TEMP2', 'TEMP_26','temp','Temp1'] },
   { name: 'Consommation', id: '5', feednames: ['ENERGY'] },
+  { name: 'Multigrandeurs', id: '6', feednames: ['VS','TENSION','P1','P2','P3','P_PH1','P_PH2','P_PH3','I1', 'I2', 'I3', 'i1', 'i2', 'i3','S1','S2','S3','s1','s2','s3','cf1','cf2','cf3','CF1','CF2',' CF3','TEMP1','TEMP2'] },
+  { name: 'Eau', id: '8', feednames: ['DEBIT_EAU','EAU EW'] },
+  
 ];
 
 const Dashboards = () => {
@@ -50,6 +55,29 @@ const Dashboards = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [currentTabIndex, setCurrentTabIndex] = useState(1);
+
+
+  const handleTabPress = (index: number) => {
+    setCurrentTabIndex(index);
+    switch (index) {
+      case 0:
+        router.push('/home');
+        break;
+      case 1:
+        router.push('/dashboards');
+        break;
+      case 2:
+        router.push('/dropdown');
+        break;
+      case 3:
+        router.push('/settings');
+        break;
+      case 4:
+        router.push('/profile');
+        break;
+    }
+  };
 
   const fetchInitialData = useCallback(async () => {
     setLoading(true);
@@ -192,7 +220,7 @@ const Dashboards = () => {
       </View>
 
       <ScrollView 
-        style={styles.scrollView} 
+        style={[styles.scrollView,{marginBottom: 60}]} 
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {groupedData.map((group, index) => (
@@ -257,6 +285,10 @@ const Dashboards = () => {
           </View>
         ))}
       </ScrollView>
+      <AnimatedBottomBar
+        currentIndex={currentTabIndex}
+        onTabPress={handleTabPress}
+      />
     </View>
   );
 };

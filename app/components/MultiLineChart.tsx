@@ -8,6 +8,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CHART_WIDTH = SCREEN_WIDTH * 2; // Make chart wider for scrolling
 const CHART_HEIGHT = 300; // Increased height for better x-axis visibility
 
+
 interface ChartDataPoint {
   timestamp: number;
   value: number;
@@ -30,6 +31,7 @@ const MultiLineChart: React.FC<MultiLineChartProps> = React.memo(({
 }) => {
   const { colors: themeColors } = useTheme();
   const [dimensions, setDimensions] = useState({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT });
+  const ITEM_COLORS = ['#FF5733', '#33FF57', '#3357FF', '#F033FF', '#FF33A8'];
 
   // Handle orientation changes
   useEffect(() => {
@@ -128,9 +130,13 @@ const MultiLineChart: React.FC<MultiLineChartProps> = React.memo(({
         backgroundColor: themeColors.surface,
         width: dimensions.width - 32, // Account for padding
       }]}>
-        <Text style={[styles.title, { color: themeColors.text }]}>
-          {chartTitle}
-        </Text>
+        
+        <View style={[{flexDirection:"row",alignItems:"center",justifyContent:"space-around",padding:10}]}>
+                    {items.sort().map((item, index) => (<View key={index} style={[styles.labelContainer, {marginTop: 10, flexDirection: 'row', alignItems: 'center'}]}>
+                        <View style={[styles.colorDot, { backgroundColor: ITEM_COLORS[index % ITEM_COLORS.length] }]} />
+                        <Text style={[styles.labelText, { color: themeColors.text }]}>{item.name}</Text>
+                    </View>))}
+                  </View>
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={true}
@@ -165,7 +171,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
+    padding: 26,
   },
   lineChartCard: {
     marginVertical: 12,
@@ -189,6 +195,21 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 16,
     overflow: 'hidden',
+  },
+  labelContainer: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  labelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  colorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   chart: {
     marginVertical: 8,

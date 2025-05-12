@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Redirect } from 'expo-router';
+import { Redirect,Tabs } from 'expo-router';
 import CustomSplashScreen from './screens/SplashScreen';
+
 
 export default function Index() {
   const [showSplash, setShowSplash] = useState(true);
@@ -9,5 +10,6 @@ export default function Index() {
     return <CustomSplashScreen onFinish={() => setShowSplash(false)} />;
   }
 
+  // Your splash/index.tsx
   return <Redirect href="/(app)/home" />;
 }

@@ -17,6 +17,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useApiKey } from '../context/ApiKeyContext';
 import { fetchFeeds } from '../services/api';
 import { Feed } from '../types';
+import AnimatedBottomBar from './AnimatedBottomBar';
 
 interface FeedItem extends Feed {
   time: number;
@@ -31,6 +32,28 @@ const DropDownMenu = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentTabIndex, setCurrentTabIndex] = useState(2);
+
+  const handleTabPress = (index: number) => {
+    setCurrentTabIndex(index);
+    switch (index) {
+      case 0:
+        router.push('/home');
+        break;
+      case 1:
+        router.push('/dashboards');
+        break;
+      case 2:
+        router.push('/dropdown');
+        break;
+      case 3:
+        router.push('/settings');
+        break;
+      case 4:
+        router.push('/profile');
+        break;
+    }
+  };
 
   const fetchData = useCallback(async () => {
     if (!apiKey) {
@@ -189,6 +212,10 @@ const DropDownMenu = () => {
           </TouchableOpacity>
         ))}
       </ScrollView>
+      <AnimatedBottomBar
+        currentIndex={currentTabIndex}
+        onTabPress={handleTabPress}
+      />
     </View>
   );
 };
@@ -203,7 +230,7 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 20, fontWeight: 'bold' },
   refreshButton: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 4 },
   refreshButtonText: { fontWeight: 'bold' },
-  scrollView: { flex: 1 },
+  scrollView: { flex: 1 ,marginBottom: 60 },
   itemContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
